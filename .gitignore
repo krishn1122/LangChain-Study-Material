@@ -1,0 +1,67 @@
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+.venv/
+ENV/
+.venv
+
+# Environment and secret files
+.env
+.env.*
+credentials.json
+secrets.json
+*.pem
+*.key
+
+# IDEs and editors
+.vscode/
+.idea/
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Testing, coverage, cache
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+logs/
+
+# LangChain / data / outputs
+Langchain_Prompt/chat_history.txt
+data/
+models/
+outputs/
+embeddings/
+
+# Databases
+*.db
+*.sqlite
+
+# Misc
+*.so
+*.dll
+
+# Keep this repo-specific: ignore local secrets or large artifacts
+# Add other items as needed

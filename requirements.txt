@@ -1,5 +1,5 @@
 langchain==0.2.14
-langchain-core==0.2.32
+langchain-core==0.2.33
 
 langchain-openai==0.1.22
 openai==1.40.6

@@ -16,4 +16,4 @@ chain= prompt | model | parser
 result=chain.invoke({'Superhero': 'Batman'})
 print(result)
 
-chain.get_graph().print_ascii()
+# chain.get_graph().print_ascii()

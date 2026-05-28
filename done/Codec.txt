@@ -1,0 +1,157 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# Install necessary packages
+!pip install sentence-transformers faiss-cpu langchain numba huggingface-hub
+
+import os
+import json
+import numpy as np
+import faiss
+from sentence_transformers import SentenceTransformer
+from langchain_community.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from numba import cuda
+from langchain.schema import SystemMessage, HumanMessage, AIMessage
+from langchain.prompts import ChatPromptTemplate
+from langchain_community.llms import LlamaCpp
+from huggingface_hub import hf_hub_download
+
+# Function to extract text and split into chunks
+def extract_and_split_text(pdf_file, chunk_size=300):
+    loader = PyPDFLoader(pdf_file)
+    doc = loader.load_and_split()
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=50,
+        length_function=len,
+        add_start_index=True,
+    )
+    chunks = text_splitter.split_documents(doc)
+
+    # Print and check chunks
+    for idx, chunk in enumerate(chunks):
+        print(f"Chunk {idx}:\n{chunk.page_content}\n{'-'*40}")
+
+    # Handle very small and very large chunks
+    chunks = [chunk for chunk in chunks if 50 < len(chunk.page_content) < 2000]
+
+    return chunks
+
+# Function to create embeddings and handle edge cases
+def create_embeddings(chunks, model_path='sentence-transformers/paraphrase-MiniLM-L6-v2'):
+    model = SentenceTransformer(model_path)
+    embeddings = []
+
+    for chunk in chunks:
+        embedding = model.encode(chunk.page_content)
+        if embedding.size == 0:
+            embedding = np.zeros((768,))  # Assuming 768-dimensional embeddings
+        embeddings.append(embedding)
+
+    embeddings = np.vstack(embeddings)
+
+    # Padding and normalization if necessary
+    embeddings = np.pad(embeddings, ((0, 0), (0, 0)), mode='constant', constant_values=0)
+    embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
+
+    return embeddings
+
+# Function to create FAISS index
+def create_faiss_index(embeddings, index_file):
+    index = faiss.IndexFlatL2(embeddings.shape[1])
+    index.add(embeddings)
+    faiss.write_index(index, index_file)
+    return index
+
+# Function to load FAISS index
+def load_faiss_index(index_file):
+    if not os.path.exists(index_file):
+        raise FileNotFoundError(f"Index file does not exist: {index_file}")
+    return faiss.read_index(index_file)
+
+# Function to perform similarity search
+def similarity_search(index, query_embedding, k=10):
+    query_embedding = np.array(query_embedding).astype('float32')
+    D, I = index.search(np.array([query_embedding]), k)
+    return I[0], D[0]
+
+# Main process
+pdf_file_name = '/content/the-story-of-doctor-dolittle-1-15.pdf'
+DB_file_name = os.path.basename(pdf_file_name).split('.')[0]
+index_file = f"{DB_file_name}.index"
+
+# Extract text and split into chunks
+chunks = extract_and_split_text(pdf_file_name)
+
+# Create embeddings and handle edge cases
+embeddings = create_embeddings(chunks)
+
+# Create FAISS index if it doesn't exist
+if not os.path.exists(index_file):
+    index = create_faiss_index(embeddings, index_file)
+else:
+    index = load_faiss_index(index_file)
+
+# Define and do the embeddings of query
+model = SentenceTransformer('sentence-transformers/paraphrase-MiniLM-L6-v2')
+query = 'who is the author of this book?'
+query_embedding = model.encode(query)
+
+# Perform similarity search
+indices, distances = similarity_search(index, query_embedding, k=10)
+
+# Print top results and check
+print("Top results from similarity search:")
+for idx in indices:
+    print(f"Chunk {idx}:\n{chunks[int(idx)].page_content}\n{'-'*40}")
+
+# Convert searched chunks to JSON format
+searched_chunks = [{"chunk_id": int(idx), "content": chunks[int(idx)].page_content} for idx in indices]
+context_json = json.dumps(searched_chunks, indent=2)
+
+n_gpu_layers = -1
+n_batch = 512
+
+# Use the Hugging Face model directly (replace with an appropriate model if needed)
+model_name = 'TheBloke/Mistral-7B-Instruct-v0.2-GGUF'
+model_file = hf_hub_download(repo_id=model_name, filename='mistral-7b-instruct-v0.2.Q4_K_M.gguf', local_dir='./')
+
+print(f"Downloaded model file path: {model_file}")
+
+llm = LlamaCpp(
+    model_path=model_file,
+    n_gpu_layers=-1,
+    n_batch=512,
+    temperature=.5,
+    n_ctx=10000,
+)
+
+# Define prompt template
+PROMPT_TEMPLATE = """
+Given the following document context in JSON format, answer the question:
+{context}
+Question: {question}
+Answer:
+"""
+
+# Generate sample text for LLM check
+def generate_sample_prompt(question, context_json):
+    prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
+    prompt = prompt_template.format_messages(context=context_json, question=question)
+    return prompt
+
+sample_prompt = generate_sample_prompt('What is the document about?', context_json)
+print("Generated sample prompt:")
+print(sample_prompt)
+
+# Define prompt with context and generate answer
+prompt = generate_sample_prompt(query, context_json)
+
+# Pass query, retrieved context, prompt to LLM to generate answer
+try:
+    response = llm.invoke(prompt)
+    print("Response:")
+    print(response)
+except Exception as e:
+    print(f"Error during model invocation: {e}")
